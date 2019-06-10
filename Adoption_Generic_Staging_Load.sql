@@ -367,6 +367,36 @@ WHERE A.sf_fieldname = 'Planning_Choice__c'
 AND b.track_delta = 'Y' AND b.initial_data_loaded = 'N';
 COMMIT;
 
+--Step 8 : If a mat_delta_sf_staging.magtemplates_id does not exist in mat_delta_sf_adoptions
+--         and mat_delta_sf_staging.new_add_delete flag has not been populated
+--         then we know this is a new MAT workbook, not an initial load (because the new_add_delete flag
+--         was populated for initial loading above), and that all of the planning choices associated
+--         with this MAT should be set to new.
+UPDATE
+(SELECT A.new_add_delete
+FROM mat_delta_sf_staging A
+LEFT JOIN mat_delta_sf_adoptions B
+ON A.magtemplates_id = B.magtemplates_id
+WHERE B.magtemplates_id IS NULL
+AND A.sf_fieldname = 'Planning_Choice__c'
+AND A.new_add_delete IS NULL) C
+SET C.new_add_delete = 'N';
+COMMIT;
+
+-- Insert records into the MAT_DELTA_SF_ADOPTIONS table
+INSERT /*+ append  */ INTO MAT_DELTA_SF_ADOPTIONS (
+  MAGTEMPLATES_ID,
+  PLANNING_CHOICE
+)
+SELECT a.magtemplates_id, a.fieldvalue
+FROM mat_delta_sf_staging A
+LEFT JOIN mat_delta_sf_adoptions B
+ON A.magtemplates_id = B.magtemplates_id
+WHERE B.magtemplates_id IS NULL
+AND A.sf_fieldname = 'Planning_Choice__c'
+AND A.new_add_delete IS NULL;
+COMMIT;
+
 --Step 8 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
