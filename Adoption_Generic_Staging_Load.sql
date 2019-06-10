@@ -342,14 +342,39 @@ AND RPT.FLEX_YEAR = STG.SEASON_YEAR
 AND RPT.FLEX_SEASON = STG.SEASON_NAME;
 COMMIT;
 
---Step 7 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
+--Step 7 : If this is an initial load for a season (SEASONS.TRACK_DELTA = 'Y' and SEASONS.INITIAL_DATA_LOADED = 'N')
+--         Set the NEW_ADD_DELETE flag in the Staging table for all Planning Choice records (Adoptions) to 'N' (New) 
+UPDATE
+(SELECT A.new_add_delete
+FROM mat_delta_sf_staging A
+INNER JOIN seasons B
+ON A.season_year = B.year AND A.season_name = B.name
+WHERE A.sf_fieldname = 'Planning_Choice__c'
+AND B.track_delta = 'Y' AND B.initial_data_loaded = 'N') C
+SET C.new_add_delete = 'N';
+COMMIT;
+
+-- Insert records into the MAT_DELTA_SF_ADOPTIONS table
+INSERT /*+ append  */ INTO MAT_DELTA_SF_ADOPTIONS (
+  MAGTEMPLATES_ID,
+  PLANNING_CHOICE
+)
+SELECT a.magtemplates_id, a.fieldvalue
+FROM mat_delta_sf_staging A
+INNER JOIN seasons B
+ON A.season_year = B.year AND A.season_name = B.name
+WHERE A.sf_fieldname = 'Planning_Choice__c'
+AND b.track_delta = 'Y' AND b.initial_data_loaded = 'N';
+COMMIT;
+
+--Step 8 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
 
---Step 8 : Retrieve the total records count from the staging table.
+--Step 9 : Retrieve the total records count from the staging table.
 SELECT COUNT(*) INTO P_SF_STAGING_COUNT FROM MAT_DELTA_SF_STAGING;
 
---Step 9 : Insert a record into the runlog with information regarding this run.
+--Step 10 : Insert a record into the runlog with information regarding this run.
 INSERT INTO MAT_DELTA_SF_RUNLOG (RUNTIME, RECORDS)
 SELECT SYSDATE, P_SF_STAGING_COUNT FROM DUAL;
 COMMIT;
