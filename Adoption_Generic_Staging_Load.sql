@@ -507,14 +507,14 @@ MT_PC_IN_ADOPTIONS_NOT_MAT AS -- Select mat_delta_sf_adoptions records that are 
 SELECT planning_choice FROM MT_PC_IN_ADOPTIONS_NOT_MAT);
 COMMIT;
 
---Step 8 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
+--Step 11 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
 
---Step 9 : Retrieve the total records count from the staging table.
+--Step 12 : Retrieve the total records count from the staging table.
 SELECT COUNT(*) INTO P_SF_STAGING_COUNT FROM MAT_DELTA_SF_STAGING;
 
---Step 10 : Insert a record into the runlog with information regarding this run.
+--Step 13 : Insert a record into the runlog with information regarding this run.
 INSERT INTO MAT_DELTA_SF_RUNLOG (RUNTIME, RECORDS)
 SELECT SYSDATE, P_SF_STAGING_COUNT FROM DUAL;
 COMMIT;
