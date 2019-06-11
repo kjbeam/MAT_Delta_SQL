@@ -397,6 +397,116 @@ AND A.sf_fieldname = 'Planning_Choice__c'
 AND A.new_add_delete IS NULL;
 COMMIT;
 
+--Step 9 : If the mat_delta_sf_staging.magtemplates_id/Planning Choice combination does not exist
+--         in mat_delta_sf_adoptions and mat_delta_sf_staging.new_add_delete flag has not been populated
+--         (because the new_add_delete flag was populated for initial loading or because it was a 
+--          new MAT workbook during the delta process)
+--         Planning Choice records should be set to 'Add'
+UPDATE
+(SELECT A.new_add_delete
+FROM mat_delta_sf_staging A
+LEFT JOIN mat_delta_sf_adoptions B
+ON A.magtemplates_id = B.magtemplates_id AND A.fieldvalue = B.planning_choice
+WHERE B.magtemplates_id IS NULL
+AND A.sf_fieldname = 'Planning_Choice__c'
+AND A.new_add_delete IS NULL) C
+SET C.new_add_delete = 'A';
+COMMIT;
+
+-- Insert records into the MAT_DELTA_SF_ADOPTIONS table
+INSERT /*+ append  */ INTO MAT_DELTA_SF_ADOPTIONS (
+  MAGTEMPLATES_ID,
+  PLANNING_CHOICE
+)
+SELECT A.new_add_delete
+FROM mat_delta_sf_staging A
+LEFT JOIN mat_delta_sf_adoptions B
+ON A.magtemplates_id = B.magtemplates_id AND A.fieldvalue = B.planning_choice
+WHERE B.magtemplates_id IS NULL
+AND A.sf_fieldname = 'Planning_Choice__c'
+AND A.new_add_delete IS NULL;
+COMMIT;
+
+--Step 10 : If the mat_delta_sf_adoptions.magtemplates_id/Planning Choice combination does not exist
+--          in the main MAT table, this means that the row that contains this planning choice has
+--          been deleted.
+
+-- Insert a planning choice records into mat_delta_sf_staging designating that they are deleted
+-- (mat_delta_sf_staging.new_add_delete = 'D')
+INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
+  MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
+  ROW_ID,  BRAND_ID,  BRAND_NAME,  SEASONS_ID, SEASON_YEAR,  SEASON_NAME, 
+  SEASON_SHORTNAME, SF_FIELDNAME,FIELDVALUE,SORT_ORDER,SEGMENT_COUNT,
+  CREATE_DATE,MODIFIED_DATE, NEW_ADD_DELETE
+)
+WITH MAT_MT_PC AS -- Pull magtemplates_id and planning choice records from MAT where we are tracking the season
+(
+    SELECT A.magtemplates_id AS MAT_MT_ID, A.fieldvalue as MAT_PLANNING_CHOICE 
+    FROM MAT A
+    INNER JOIN MDIS_MAGTEMPLATES B ON B.ID = A.MAGTEMPLATES_ID
+    WHERE B.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
+    AND A.FIELDS_ID = 3
+),
+MT_PC_IN_ADOPTIONS_NOT_MAT AS -- Select mat_delta_sf_adoptions records that are not in the MAT table
+(
+    SELECT *
+    FROM mat_delta_sf_adoptions A
+    LEFT JOIN MAT_MT_PC B
+    ON A.magtemplates_id = B.MAT_MT_ID AND A.planning_choice = B.MAT_PLANNING_CHOICE
+    WHERE B.MAT_MT_ID IS NULL and B.MAT_PLANNING_CHOICE IS NULL
+)
+SELECT 999999 AS MAG_ID, 'MAG_DELETE' AS MAG_NAME, MAGTEMPLATES_ID, 
+        'MAGTEMPLATES_DELETE' AS MAGTEMPLATES_NAME,  999999 AS ROW_ID,  
+        999999 AS BRAND_ID, 'BRAND_DELETE' AS BRAND_NAME, 999999 AS SEASONS_ID, 
+        '9999' AS SEASON_YEAR, 'SEASON_DELETE' AS SEASON_NAME, 
+        '9999' AS SEASON_SHORTNAME, 'Planning_Choice__c' AS FIELDNAME, PLANNING_CHOICE AS FIELDVALUE, 
+        137 AS SORT_ORDER, MAGTEMPLATES_ID AS SEGMENT_COUNT,
+        TO_CHAR(SYSDATE, 'DD-MON-YYYY HH24:MI:SS') AS CREATE_DATE, 
+        TO_CHAR(SYSDATE, 'DD-MON-YYYY HH24:MI:SS') AS MODIFIED_DATE, 'D'
+FROM MT_PC_IN_ADOPTIONS_NOT_MAT
+COMMIT;
+
+--Delete the records from the mat_delta_sf_adoptions table because they no longer exist in MAT
+DELETE FROM mat_delta_sf_adoptions 
+WHERE magtemplates_id in
+(WITH MAT_MT_PC AS -- Pull magtemplates_id and planning choice records from MAT where we are tracking the season
+(
+    SELECT A.magtemplates_id AS MAT_MT_ID, A.fieldvalue as MAT_PLANNING_CHOICE 
+    FROM MAT A
+    INNER JOIN MDIS_MAGTEMPLATES B ON B.ID = A.MAGTEMPLATES_ID
+    WHERE B.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
+    AND A.FIELDS_ID = 3
+),
+MT_PC_IN_ADOPTIONS_NOT_MAT AS -- Select mat_delta_sf_adoptions records that are not in the MAT table
+(
+    SELECT *
+    FROM mat_delta_sf_adoptions A
+    LEFT JOIN MAT_MT_PC B
+    ON A.magtemplates_id = B.MAT_MT_ID AND A.planning_choice = B.MAT_PLANNING_CHOICE
+    WHERE B.MAT_MT_ID IS NULL and B.MAT_PLANNING_CHOICE IS NULL
+)
+SELECT magtemplates_id FROM MT_PC_IN_ADOPTIONS_NOT_MAT)
+AND
+planning_choice in 
+(WITH MAT_MT_PC AS -- Pull magtemplates_id and planning choice records from MAT where we are tracking the season
+(
+    SELECT A.magtemplates_id AS MAT_MT_ID, A.fieldvalue as MAT_PLANNING_CHOICE 
+    FROM MAT A
+    INNER JOIN MDIS_MAGTEMPLATES B ON B.ID = A.MAGTEMPLATES_ID
+    WHERE B.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
+    AND A.FIELDS_ID = 3
+),
+MT_PC_IN_ADOPTIONS_NOT_MAT AS -- Select mat_delta_sf_adoptions records that are not in the MAT table
+(
+    SELECT *
+    FROM mat_delta_sf_adoptions A
+    LEFT JOIN MAT_MT_PC B
+    ON A.magtemplates_id = B.MAT_MT_ID AND A.planning_choice = B.MAT_PLANNING_CHOICE
+    WHERE B.MAT_MT_ID IS NULL and B.MAT_PLANNING_CHOICE IS NULL
+)
+SELECT planning_choice FROM MT_PC_IN_ADOPTIONS_NOT_MAT);
+COMMIT;
+
 --Step 8 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
