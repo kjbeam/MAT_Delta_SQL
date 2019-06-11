@@ -418,7 +418,7 @@ INSERT /*+ append  */ INTO MAT_DELTA_SF_ADOPTIONS (
   MAGTEMPLATES_ID,
   PLANNING_CHOICE
 )
-SELECT A.new_add_delete
+SELECT A.magtemplates_id, A.fieldvalue
 FROM mat_delta_sf_staging A
 LEFT JOIN mat_delta_sf_adoptions B
 ON A.magtemplates_id = B.magtemplates_id AND A.fieldvalue = B.planning_choice
