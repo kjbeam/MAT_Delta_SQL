@@ -344,14 +344,19 @@ COMMIT;
 
 --Step 7 : If this is an initial load for a season (SEASONS.TRACK_DELTA = 'Y' and SEASONS.INITIAL_DATA_LOADED = 'N')
 --         Set the NEW_ADD_DELETE flag in the Staging table for all Planning Choice records (Adoptions) to 'N' (New) 
-UPDATE
-(SELECT A.new_add_delete
+MERGE INTO mat_delta_sf_staging target
+USING (SELECT A.*
 FROM mat_delta_sf_staging A
 INNER JOIN seasons B
 ON A.season_year = B.year AND A.season_name = B.name
 WHERE A.sf_fieldname = 'Planning_Choice__c'
-AND B.track_delta = 'Y' AND B.initial_data_loaded = 'N') C
-SET C.new_add_delete = 'N';
+AND B.track_delta = 'Y' AND B.initial_data_loaded = 'N') source
+ON
+(target.magtemplates_id = source.magtemplates_id
+AND target.row_id = source.row_id
+AND target.sf_fieldname = source.sf_fieldname)
+WHEN MATCHED THEN
+UPDATE SET target.new_add_delete = 'N';
 COMMIT;
 
 -- Insert records into the MAT_DELTA_SF_ADOPTIONS table
@@ -372,15 +377,21 @@ COMMIT;
 --         then we know this is a new MAT workbook, not an initial load (because the new_add_delete flag
 --         was populated for initial loading above), and that all of the planning choices associated
 --         with this MAT should be set to new.
-UPDATE
-(SELECT A.new_add_delete
+
+MERGE INTO mat_delta_sf_staging target
+USING (SELECT A.*
 FROM mat_delta_sf_staging A
 LEFT JOIN mat_delta_sf_adoptions B
 ON A.magtemplates_id = B.magtemplates_id
 WHERE B.magtemplates_id IS NULL
 AND A.sf_fieldname = 'Planning_Choice__c'
-AND A.new_add_delete IS NULL) C
-SET C.new_add_delete = 'N';
+AND A.new_add_delete IS NULL) source
+ON 
+(target.magtemplates_id = source.magtemplates_id
+AND target.row_id = source.row_id
+AND target.sf_fieldname = source.sf_fieldname)
+WHEN MATCHED THEN
+UPDATE SET target.new_add_delete = 'N';
 COMMIT;
 
 -- Insert records into the MAT_DELTA_SF_ADOPTIONS table
@@ -402,15 +413,20 @@ COMMIT;
 --         (because the new_add_delete flag was populated for initial loading or because it was a 
 --          new MAT workbook during the delta process)
 --         Planning Choice records should be set to 'Add'
-UPDATE
-(SELECT A.new_add_delete
+MERGE INTO mat_delta_sf_staging target
+USING (SELECT A.*
 FROM mat_delta_sf_staging A
 LEFT JOIN mat_delta_sf_adoptions B
 ON A.magtemplates_id = B.magtemplates_id AND A.fieldvalue = B.planning_choice
 WHERE B.magtemplates_id IS NULL
 AND A.sf_fieldname = 'Planning_Choice__c'
-AND A.new_add_delete IS NULL) C
-SET C.new_add_delete = 'A';
+AND A.new_add_delete IS NULL) source
+ON 
+(target.magtemplates_id = source.magtemplates_id
+AND target.row_id = source.row_id
+AND target.sf_fieldname = source.sf_fieldname)
+WHEN MATCHED THEN
+UPDATE SET target.new_add_delete = 'A';
 COMMIT;
 
 -- Insert records into the MAT_DELTA_SF_ADOPTIONS table
