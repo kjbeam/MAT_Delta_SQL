@@ -7,6 +7,12 @@ AS
 
 BEGIN
 
+EXECUTE IMMEDIATE 'DROP TABLE TBL_RPT_MAT_REPORTING';
+COMMIT;
+
+EXECUTE IMMEDIATE 'CREATE TABLE TBL_RPT_MAT_REPORTING AS SELECT * FROM RPT_MAT_REPORTING';
+
+COMMIT;
 -- Retrieve the last runtime from the runlog.
 SELECT RUNTIME INTO P_SF_LASTRUNDATETIME FROM MAT_DELTA_SF_RUNLOG WHERE ID IN (SELECT MAX(ID) FROM MAT_DELTA_SF_RUNLOG);
 
@@ -316,7 +322,7 @@ SELECT STG.MAG_ID,  STG.MAG_NAME,  STG.MAGTEMPLATES_ID,  STG.MAGTEMPLATES_NAME,
   STG.ROW_ID,  STG.BRAND_ID,  STG.BRAND_NAME,  STG.SEASONS_ID,
   STG.SEASON_YEAR,  STG.SEASON_NAME, STG.SEASON_SHORTNAME,'Master_Style_Desc__c', RPT.masterstyle_desc,
   STG.SORT_ORDER, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE
-FROM mat_delta_sf_staging STG, rpt_mat_reporting RPT
+FROM mat_delta_sf_staging STG, TBL_RPT_MAT_REPORTING RPT
 WHERE STG.sf_fieldname = 'Planning_Choice__c'
 AND RPT.masterstyle_desc IS NOT NULL
 AND STG.fieldvalue = trim(RPT.planning_choice)
@@ -334,12 +340,24 @@ SELECT STG.MAG_ID,  STG.MAG_NAME,  STG.MAGTEMPLATES_ID,  STG.MAGTEMPLATES_NAME,
   STG.ROW_ID,  STG.BRAND_ID,  STG.BRAND_NAME,  STG.SEASONS_ID,
   STG.SEASON_YEAR,  STG.SEASON_NAME, STG.SEASON_SHORTNAME,'Generic_Description__c', RPT.generic_desc,
   STG.SORT_ORDER, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE
-FROM mat_delta_sf_staging STG, rpt_mat_reporting RPT
+FROM mat_delta_sf_staging STG, TBL_RPT_MAT_REPORTING RPT
 WHERE STG.sf_fieldname = 'Planning_Choice__c'
 AND RPT.generic_desc IS NOT NULL
 AND STG.fieldvalue = trim(RPT.planning_choice)
 AND RPT.FLEX_YEAR = STG.SEASON_YEAR
 AND RPT.FLEX_SEASON = STG.SEASON_NAME;
+COMMIT;
+
+--Added by Senthilkumar Bose Step 6.1 : Adding Unique value column (NAME  = MAGTEMPLATES_ID || ROW_ID || FIELDVALUE)
+INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
+  MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
+  ROW_ID,  BRAND_ID,  BRAND_NAME,  SEASONS_ID,
+  SEASON_YEAR,  SEASON_NAME, SEASON_SHORTNAME, SF_FIELDNAME,FIELDVALUE,SORT_ORDER,SEGMENT_COUNT,CREATE_DATE,MODIFIED_DATE
+)
+SELECT MAG_ID, MAG_NAME, MAGTEMPLATES_ID, MAGTEMPLATES_NAME, 
+ROW_ID, BRAND_ID, BRAND_NAME, SEASONS_ID, 
+SEASON_YEAR, SEASON_NAME, SEASON_SHORTNAME, 'Name' AS SF_FIELDNAME, (MAGTEMPLATES_ID || ROW_ID || FIELDVALUE) AS FIELDVALUE, 999 AS SORT_ORDER, SEGMENT_COUNT, CREATE_DATE, MODIFIED_DATE 
+FROM MAT_DELTA_SF_STAGING WHERE SF_FIELDNAME = 'Planning_Choice__c';
 COMMIT;
 
 --Step 7 : If this is an initial load for a season (SEASONS.TRACK_DELTA = 'Y' and SEASONS.INITIAL_DATA_LOADED = 'N')
@@ -523,14 +541,41 @@ MT_PC_IN_ADOPTIONS_NOT_MAT AS -- Select mat_delta_sf_adoptions records that are 
 SELECT planning_choice FROM MT_PC_IN_ADOPTIONS_NOT_MAT);
 COMMIT;
 
---Step 11 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
+--Step 11 : Delete all rows that do not have a Planning_Choice__c records.  We have to do this because in Step 6.1
+--          Planning_Choice__c field value must exist to create the unique key (magtemplates_id/row_id/Planning Choice)
+--          that Salesforce needs
+DELETE FROM mat_delta_sf_staging A
+WHERE a.magtemplates_id NOT IN (SELECT B.magtemplates_id
+                                FROM mat_delta_sf_staging B
+                                WHERE (B.sf_fieldname = 'Planning_Choice__c' AND B.fieldvalue IS NOT NULL))
+AND a.row_id not in (SELECT c.row_id 
+                     FROM mat_delta_sf_staging c
+                     WHERE (c.sf_fieldname = 'Planning_Choice__c' AND c.fieldvalue IS NOT NULL));
+COMMIT;
+
+--Step 12.1 : Update add dates with DD-MON-YY to YYYY-MM-DD HH:MI:SS
+update mat_delta_sf_staging
+set fieldvalue = TO_CHAR(TO_DATE(fieldvalue,'DD-MON-YY'), 'YYYY-MM-DD HH:MI:SS')
+where length(fieldvalue) <= 9
+and regexp_count(fieldvalue,'-') = 2;
+COMMIT;
+
+--Step 12.2 : Update all dates to be in the correct format for Salesforce (MM-DD-YYY HH:MM:SS)
+UPDATE mat_delta_sf_staging a
+set a.fieldvalue = TO_CHAR(TO_DATE(a.fieldvalue,'MM/DD/YYYY, HH:MI:SS AM'), 'YYYY-MM-DD HH:MI:SS')
+where a.id in (select b.id from mat_delta_sf_staging b
+inner join mat_delta_sf_fields c on b.sf_fieldname = c.salesforce_name and c.text_date = 'Y'
+and a.fieldvalue is not null);
+COMMIT;
+
+--Step 13 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
 
---Step 12 : Retrieve the total records count from the staging table.
+--Step 14 : Retrieve the total records count from the staging table.
 SELECT COUNT(*) INTO P_SF_STAGING_COUNT FROM MAT_DELTA_SF_STAGING;
 
---Step 13 : Insert a record into the runlog with information regarding this run.
+--Step 15 : Insert a record into the runlog with information regarding this run.
 INSERT INTO MAT_DELTA_SF_RUNLOG (RUNTIME, RECORDS)
 SELECT SYSDATE, P_SF_STAGING_COUNT FROM DUAL;
 COMMIT;
