@@ -88,9 +88,7 @@ WHERE C.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIA
 AND A.MODIFIED_DATE > P_SF_LASTRUNDATETIME;
 COMMIT;
 
---Step 2B : Delta - Generics (Generic is populated, Color Marketing Name is NOT populated) -- Do we need this?
---                  Pull Style Related Fields Only
---                  Modified Date of the field must fall between the last runlog datetime and the current run datetime
+-- 2A.1 : Ensure that all rows have a Planning Choice record, if one exists.
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING
 (
   MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
@@ -98,53 +96,31 @@ INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING
   SEASON_YEAR,  SEASON_NAME, SEASON_SHORTNAME,  SF_FIELDNAME,  FIELDVALUE,
   SORT_ORDER,SEGMENT_COUNT,CREATE_DATE,MODIFIED_DATE, STATUS
 )
-WITH GENERICS_GENERIC_NUM_CHECK AS -- Pull magtemplates_id and row_id where there is a generic number
+WITH STAGING_ROWS_WO_PC AS
+(-- 1 - Pull all distinct rows from mat staging that do not have a planning choice record
+SELECT distinct A.magtemplates_id, A.row_id 
+FROM mat_delta_sf_staging A
+INNER JOIN MDIS_MAGTEMPLATES B ON B.ID = A.MAGTEMPLATES_ID
+WHERE B.SEASONS_ID IN (SELECT C.ID FROM SEASONS C WHERE C.TRACK_DELTA = 'Y' AND C.INITIAL_DATA_LOADED = 'Y')
+and (a.magtemplates_id || a.row_id) not in (select D.magtemplates_id || D.row_id 
+                                            from mat_delta_sf_staging D 
+                                            where D.sf_fieldname = 'Planning_Choice__c' 
+                                            and D.fieldvalue is not null)
+), PC_FROM_MAT AS
 (
-    SELECT A.magtemplates_id, A.row_id 
-    FROM MAT A
-    INNER JOIN MDIS_MAGTEMPLATES C ON C.ID = A.MAGTEMPLATES_ID
-    WHERE C.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
-    AND (A.FIELDS_ID = 6 AND a.fieldvalue IS NOT NULL)
-),
-GENERICS_CMN_FIELDS_CHECK AS -- Pull magtemplates_id and row_id where color marketing name is populated
-                             -- We will LEFT JOIN with the magtemplates/rows that have generic number
-                             -- in GENERIC_RESULTS so that we only have magtemplates/rows that have a 
-                             -- generic number populated but do not have a color marketing name.
-(
-    SELECT A.magtemplates_id, A.row_id, A.fieldvalue as ZZ_PLMID, B.fieldvalue as ZZ_CHOICEID, C.SEASON_YEAR as FLEX_YEAR, C.SEASON_NAME as FLEX_SEASON
-    FROM MAT A
-    INNER JOIN MDIS_MAGTEMPLATES C ON C.ID = A.MAGTEMPLATES_ID
-    INNER JOIN MAT B ON B.magtemplates_id = A.MAGTEMPLATES_ID AND B.row_id = A.row_id
-    WHERE C.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
-      AND (A.FIELDS_ID = 1 AND A.fieldvalue IS NOT NULL)
-      AND (B.FIELDS_ID = 2 AND B.fieldvalue IS NOT NULL)
-),
-GENERICS_CMN_CHECK AS
-(
-    SELECT A.magtemplates_id, A.row_id
-    FROM GENERICS_CMN_FIELDS_CHECK A
-    INNER JOIN mpa_master.flex_stylecolors B 
-        ON A.ZZ_PLMID = B.ZZ_PLMID 
-        AND A.ZZ_CHOICEID = B.ZZ_CHOICEID
-        AND A.FLEX_YEAR = B.FLEX_YEAR
-        AND A.FLEX_SEASON = B.FLEX_SEASON
-),
-GENERICS_RESULTS AS -- Pull magtemplates_id and row_id where there is a generic number and no color marketing name
-(
-    SELECT A.magtemplates_id, A.row_id
-    FROM GENERICS_GENERIC_NUM_CHECK A
-    LEFT JOIN GENERICS_CMN_CHECK B ON A.MAGTEMPLATES_ID = B.MAGTEMPLATES_ID AND A.ROW_ID = B.ROW_ID
-    WHERE (B.MAGTEMPLATES_ID IS NULL AND B.ROW_ID IS NULL)
+SELECT E.magtemplates_id, E.row_id, E.fieldvalue
+FROM MAT E
+WHERE (E.MAGTEMPLATES_ID || E.ROW_ID) IN (select F.MAGTEMPLATES_ID || F.ROW_ID from staging_rows_wo_pc F)
+AND E.FIELDS_ID = 3 -- Planning Choice
 )
-SELECT C.MAG_ID,C.MAG_NAME, A.MAGTEMPLATES_ID, C.TEMPLATES_NAME, 
-    A.ROW_ID, C.BRAND_ID, C.BRAND_NAME, C.SEASONS_ID, 
-    C.SEASON_YEAR, C.SEASON_NAME, C.SEASON_SHORTNAME, B.SALESFORCE_NAME, A.FIELDVALUE, 
-    B.SORT_ORDER,A.MAGTEMPLATES_ID,A.CREATE_DATE,A.MODIFIED_DATE,'N' 
-FROM MAT A 
-INNER JOIN MAT_DELTA_SF_FIELDS B ON A.FIELDS_ID = B.FIELDS_ID AND B.STYLE_LEVEL = 'Y'
-INNER JOIN MDIS_MAGTEMPLATES C ON C.ID = A.MAGTEMPLATES_ID
-INNER JOIN GENERICS_RESULTS D ON d.magtemplates_id = A.MAGTEMPLATES_ID and d.row_id = a.row_id 
-WHERE C.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'Y')
+SELECT distinct B.MAG_ID,B.MAG_NAME, A.MAGTEMPLATES_ID, B.TEMPLATES_NAME, 
+    A.ROW_ID, B.BRAND_ID, B.BRAND_NAME, B.SEASONS_ID, 
+    B.SEASON_YEAR, B.SEASON_NAME, B.SEASON_SHORTNAME, 'Planning_Choice__c', D.FIELDVALUE, 
+    137,A.MAGTEMPLATES_ID,A.CREATE_DATE,A.MODIFIED_DATE,'N' 
+FROM mat_delta_sf_staging A 
+INNER JOIN MDIS_MAGTEMPLATES B ON B.ID = A.MAGTEMPLATES_ID
+INNER JOIN PC_FROM_MAT D ON D.magtemplates_id = A.MAGTEMPLATES_ID and D.row_id = A.row_id AND D.fieldvalue is not null
+WHERE B.SEASONS_ID IN (SELECT D.ID FROM SEASONS D WHERE D.TRACK_DELTA = 'Y' AND D.INITIAL_DATA_LOADED = 'Y')
 AND A.MODIFIED_DATE > P_SF_LASTRUNDATETIME;
 COMMIT;
 
@@ -201,7 +177,7 @@ INNER JOIN ADOPTIONS_RESULTS D ON d.magtemplates_id = A.MAGTEMPLATES_ID and d.ro
 WHERE C.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N');
 COMMIT;
 
---Step 3B : Delta - Generics (Generic is populated, Color Marketing Name is NOT populated) -- Do we need this?
+--Step 3B : Initial Load - Generics (Generic is populated, Color Marketing Name is NOT populated) -- Do we need this?
 --                  Pull Style Related Fields Only
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING
 (
@@ -306,7 +282,7 @@ FIBER_DATE AS
 SELECT MATD.MAG_ID,  MATD.MAG_NAME,  MATD.MAGTEMPLATES_ID,  MATD.MAGTEMPLATES_NAME,
   MATD.ROW_ID,  MATD.BRAND_ID,  MATD.BRAND_NAME,  MATD.SEASONS_ID,
   MATD.SEASON_YEAR,  MATD.SEASON_NAME, MATD.SEASON_SHORTNAME,'Fiber_Content__c', FIBER.FIELD_VALUE,
-  MATD.SORT_ORDER, MATD.MAGTEMPLATES_ID,MATD.CREATE_DATE,MATD.MODIFIED_DATE,'N'
+  263, MATD.MAGTEMPLATES_ID,MATD.CREATE_DATE,MATD.MODIFIED_DATE,'N'
 FROM MATARTICLE MATD INNER JOIN FIBER_DATE FIBER ON MATD.ARTICLE = FIBER.ARTICLE;
 COMMIT;
 
@@ -320,7 +296,7 @@ INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
 SELECT STG.MAG_ID,  STG.MAG_NAME,  STG.MAGTEMPLATES_ID,  STG.MAGTEMPLATES_NAME,
   STG.ROW_ID,  STG.BRAND_ID,  STG.BRAND_NAME,  STG.SEASONS_ID,
   STG.SEASON_YEAR,  STG.SEASON_NAME, STG.SEASON_SHORTNAME,'Master_Style_Desc__c', RPT.masterstyle_desc,
-  STG.SORT_ORDER, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE,'N'
+  118, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE,'N'
 FROM mat_delta_sf_staging STG, TBL_RPT_MAT_REPORTING RPT
 WHERE STG.sf_fieldname = 'Planning_Choice__c'
 AND RPT.masterstyle_desc IS NOT NULL
@@ -339,7 +315,7 @@ INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
 SELECT STG.MAG_ID,  STG.MAG_NAME,  STG.MAGTEMPLATES_ID,  STG.MAGTEMPLATES_NAME,
   STG.ROW_ID,  STG.BRAND_ID,  STG.BRAND_NAME,  STG.SEASONS_ID,
   STG.SEASON_YEAR,  STG.SEASON_NAME, STG.SEASON_SHORTNAME,'Generic_Description__c', RPT.generic_desc,
-  STG.SORT_ORDER, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE,'N'
+  264, STG.MAGTEMPLATES_ID,STG.CREATE_DATE,STG.MODIFIED_DATE,'N'
 FROM mat_delta_sf_staging STG, TBL_RPT_MAT_REPORTING RPT
 WHERE STG.sf_fieldname = 'Planning_Choice__c'
 AND RPT.generic_desc IS NOT NULL
@@ -660,8 +636,11 @@ FROM MAT_DELTA_SF_STAGING WHERE SF_FIELDNAME = 'Planning_Choice__c';
 COMMIT;
 
 -----------------------------------------------------------
----Delta SHARED_UNIQUE
+-- Step 16 : Trigger Fields
 
+-- Step 16.1 : SHARED_UNIQUE
+
+-- Delta SHARED_UNIQUE
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
   MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
   ROW_ID,  BRAND_ID,  BRAND_NAME,  SEASONS_ID,
@@ -716,7 +695,7 @@ WHERE A.SF_FIELDNAME = 'Planning_Choice__c'
 AND A.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N');
 COMMIT;
 
-
+-- Step 16.2 : CATEGORY_DESC
 ---Delta CATEGORY_DESC
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
   MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
@@ -764,6 +743,7 @@ WHERE A.SF_FIELDNAME = 'Planning_Choice__c'
 AND A.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N');
 COMMIT;
 
+-- Step 16.3 : COLOR_MARKETING_NAME
 ---Delta COLOR_MARKETING_NAME
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
   MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
@@ -809,17 +789,22 @@ FROM MAT_DELTA_SF_STAGING A INNER JOIN COLORMARKETTINGNAME_UNIQUE_INI B ON A.MAG
 WHERE A.SF_FIELDNAME = 'Planning_Choice__c'
 AND A.SEASONS_ID IN (SELECT ID FROM SEASONS WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N');
 COMMIT;
+
+-- Step 16.3 : Stores Color Size Run
+-- Step 16.3 : Digital Color Size Run
+-- Step 16.3 : SEA Color Size Run
+-- Step 16.3 : China Color Size Run
 -----------------------------------------------------------
 
-
---Step 16.1 : Update add dates with DD-MON-YY to YYYY-MM-DD HH:MI:SS
+--Step 17 : Format Dates to the correct format
+--Step 17.1 : Update add dates with DD-MON-YY to YYYY-MM-DD HH:MI:SS
 update mat_delta_sf_staging
 set fieldvalue = TO_CHAR(TO_DATE(fieldvalue,'DD-MON-YY'), 'YYYY-MM-DD')
 where length(fieldvalue) <= 9
 and regexp_count(fieldvalue,'-') = 2;
 COMMIT;
 --
---Step 16.2 : Update all dates to be in the correct format for Salesforce (MM-DD-YYY HH:MM:SS)
+--Step 17.2 : Update all dates to be in the correct format for Salesforce (MM-DD-YYY HH:MM:SS)
 UPDATE mat_delta_sf_staging a
 set a.fieldvalue = TO_CHAR(TO_DATE(a.fieldvalue,'MM/DD/YYYY, HH:MI:SS AM'), 'YYYY-MM-DD')
 where a.id in (select b.id from mat_delta_sf_staging b
@@ -832,7 +817,7 @@ COMMIT;
 --SET ROW_ID = ROW_ID + 1;
 --COMMIT;
 
--- Move all staging records to the staging_bkp table.
+--Step 18 : Move all staging records to the staging_bkp table.
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING_BKP ( ID,
   MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
   ROW_ID,  BRAND_ID,  BRAND_NAME,  SEASONS_ID,
@@ -845,14 +830,14 @@ SELECT ID, MAG_ID,  MAG_NAME,  MAGTEMPLATES_ID,  MAGTEMPLATES_NAME,
 FROM MAT_DELTA_SF_STAGING;
 COMMIT;
 
---Step 17 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
+--Step 19 : After an inital load update SEASONS.INITIAL_DATA_LOADED from 'N' to 'Y'.
 UPDATE SEASONS SET INITIAL_DATA_LOADED = 'Y' WHERE TRACK_DELTA = 'Y' AND INITIAL_DATA_LOADED = 'N';
 COMMIT;
 
---Step 18 : Retrieve the total records count from the staging table.
+--Step 20 : Retrieve the total records count from the staging table.
 SELECT COUNT(*) INTO P_SF_STAGING_COUNT FROM MAT_DELTA_SF_STAGING;
 
---Step 19 : Insert a record into the runlog with information regarding this run.
+--Step 21 : Insert a record into the runlog with information regarding this run.
 INSERT INTO MAT_DELTA_SF_RUNLOG (RUNTIME, RECORDS)
 SELECT SYSDATE, P_SF_STAGING_COUNT FROM DUAL;
 COMMIT;
