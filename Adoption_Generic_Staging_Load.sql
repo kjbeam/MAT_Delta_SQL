@@ -630,7 +630,7 @@ INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING (
 )
 SELECT MAG_ID, MAG_NAME, MAGTEMPLATES_ID, MAGTEMPLATES_NAME, 
 ROW_ID, BRAND_ID, BRAND_NAME, SEASONS_ID, 
-SEASON_YEAR, SEASON_NAME, SEASON_SHORTNAME, 'Row_Id__c' AS SF_FIELDNAME, ROW_ID AS FIELDVALUE, 989 AS SORT_ORDER, 
+SEASON_YEAR, SEASON_NAME, SEASON_SHORTNAME, 'Row_Id__c' AS SF_FIELDNAME, ROW_ID + 1 AS FIELDVALUE, 989 AS SORT_ORDER, 
 SEGMENT_COUNT, CREATE_DATE, MODIFIED_DATE,'N' 
 FROM MAT_DELTA_SF_STAGING WHERE SF_FIELDNAME = 'Planning_Choice__c';
 COMMIT;
@@ -995,18 +995,23 @@ where length(fieldvalue) <= 9
 and regexp_count(fieldvalue,'-') = 2;
 COMMIT;
 --
---Step 17.2 : Update all dates to be in the correct format for Salesforce (MM-DD-YYY HH:MM:SS)
+--Step 17.2 : Update all dates to be in the correct format for Salesforce (MM-DD-YYYY)
 UPDATE mat_delta_sf_staging a
-set a.fieldvalue = TO_CHAR(TO_DATE(a.fieldvalue,'MM/DD/YYYY, HH:MI:SS AM'), 'YYYY-MM-DD')
+set a.fieldvalue = TO_CHAR(TO_DATE(a.fieldvalue, 'MM-DD-YYYY'), 'YYYY-MM-DD')
 where a.id in (select b.id from mat_delta_sf_staging b
 inner join mat_delta_sf_fields c on b.sf_fieldname = c.salesforce_name and c.text_date = 'Y'
-and a.fieldvalue is not null and (instr(substr(a.fieldvalue,1,4),'-') <> 0 or instr(substr(a.fieldvalue,1,4),'/') <> 0));
+and a.fieldvalue is not null and (instr(substr(a.fieldvalue,1,4),'/') <> 0)
+and length(a.fieldvalue) <= 10);
 COMMIT;
-
--- Update all ROW_IDs + 1 to take into account the header record.
---UPDATE mat_delta_sf_staging
---SET ROW_ID = ROW_ID + 1;
---COMMIT;
+--
+--Step 17.3 : Update all dates to be in the correct format for Salesforce (MM-DD-YYY HH:MM:SS)
+UPDATE mat_delta_sf_staging a
+set a.fieldvalue = TO_CHAR(TO_DATE(SUBSTR(a.fieldvalue, 1, instr(a.fieldvalue,',') - 1), 'MM-DD-YYYY'), 'YYYY-MM-DD')
+where a.id in (select b.id from mat_delta_sf_staging b
+inner join mat_delta_sf_fields c on b.sf_fieldname = c.salesforce_name and c.text_date = 'Y'
+and a.fieldvalue is not null and (instr(substr(a.fieldvalue,1,4),'/') <> 0)
+and length(a.fieldvalue) > 10);
+COMMIT;
 
 --Step 18 : Move all staging records to the staging_bkp table.
 INSERT /*+ append  */ INTO MAT_DELTA_SF_STAGING_BKP ( ID,
